@@ -34,7 +34,7 @@ Overall, SimplePacket trades off a bit of speed and efficiency in favor of simpl
 
 To use SimplePacket in your Roblox project:
 
-1. Clone or download this repository.
+1. Download the latest version.
 2. Place the `SimplePacket` module into your `ReplicatedStorage` or any other accessible container.
 3. Require it in both the client and server:
 
@@ -81,3 +81,4 @@ This project is a fork of Suphi's [Packet module](https://devforum.roblox.com/t/
 
 ---
 > ⚠️ Disclaimer: This module simplifies usage at the cost of type safety and raw performance. For performance-critical systems, consider using the original Packet module.
+
