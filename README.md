@@ -53,14 +53,22 @@ local MyPacket = Packet("ChatMessage")
 Send data:
 
 ```lua
+-- Server
 MyPacket:FireClient(player, "Hello!")
+-- Client
+MyPacket:Fire("Hi!")
 ```
 
 Receive data:
 
 ```lua
-MyPacket:Connect(function(player, message)
+-- Server
+MyPacket.OnServerEvent:Connect(function(player, message)
     print(player.Name .. " says: " .. message)
+end)
+-- Client
+MyPacket.OnClientEvent:Connect(function(message)
+    print("Server: " .. message)
 end)
 ```
 
@@ -81,4 +89,5 @@ This project is a fork of Suphi's [Packet module](https://devforum.roblox.com/t/
 
 ---
 > ⚠️ Disclaimer: This module simplifies usage at the cost of type safety and raw performance. For performance-critical systems, consider using the original Packet module.
+
 
