@@ -1,223 +1,227 @@
 --!strict
-
+--!optimize 2
 
 -- Requires
 local Signal = require(script.Signal)
 local Task = require(script.Task)
 local Types = require(script.Types)
 
-
 -- Types
-export type Packet<A... = (), B... = ()> = {
-	Type:					"Packet",
-	Id:						number,
-	Name:					string,
-	Reads:					{() -> any},
-	Writes:					{(any) -> ()},
-	ResponseTimeout:		number,
-	ResponseTimeoutValue:	any,
-	ResponseReads:			{() -> any},
-	ResponseWrites:			{(any) -> ()},
-	OnServerEvent:			Signal.Signal<(Player, A...)>,
-	OnClientEvent:			Signal.Signal<A...>,
-	OnServerInvoke:			nil | (player: Player, A...) -> B...,
-	OnClientInvoke:			nil | (A...) -> B...,
-	Response:				(self: Packet<A..., B...>, B...) -> Packet<A..., B...>,
-	Fire:					(self: Packet<A..., B...>, A...) -> B...,
-	FireClient:				(self: Packet<A..., B...>, player: Player, A...) -> B...,
-	Serialize:				(self: Packet<A..., B...>, A...) -> (buffer, {Instance}?),
-	Deserialize:			(self: Packet<A..., B...>, serializeBuffer: buffer, instances: {Instance}?) -> A...,
+export type Packet<A... = ()> = {
+	Type: "Packet",
+	Id: number,
+	Name: string,
+	Reads: () -> any,
+	Writes: (any) -> (),
+	IsResponse: boolean,
+	ResponseTimeout: number,
+	ResponseTimeoutValue: any,
+	OnServerEvent: Signal.Signal<(Player, A...)>,
+	OnClientEvent: Signal.Signal<A...>,
+	OnServerInvoke: nil | (player: Player, A...) -> ...any,
+	OnClientInvoke: nil | (A...) -> ...any,
+	Response: (self: Packet<A...>) -> Packet<A...>,
+	Fire: (self: Packet<A...>, A...) -> ...any,
+	FireClient: (self: Packet<A...>, player: Player, A...) -> ...any,
+	Serialize: (self: Packet<A...>, A...) -> (buffer, { Instance }?),
+	Deserialize: (self: Packet<A...>, serializeBuffer: buffer, instances: { Instance }?) -> A...,
 }
 
-
 -- Varables
-local ParametersToFunctions, TableToFunctions, ReadParameters, WriteParameters, Timeout
+local Timeout
 local RunService = game:GetService("RunService")
 local PlayersService = game:GetService("Players")
-local reads, writes, Import, Export, Truncate, Ended = Types.Reads, Types.Writes, Types.Import, Types.Export, Types.Truncate, Types.Ended
-local ReadU8, WriteU8, ReadU16, WriteU16 = reads.NumberU8, writes.NumberU8, reads.NumberU16, writes.NumberU16
-local Packet = {}			:: Packet<...any, ...any>
-local packets = {}			:: {[string | number]: Packet<...any, ...any>}
-local playerCursors			: {[Player]: Types.Cursor}
-local playerThreads			: {[Player]: {[number]: {Yielded: thread, Timeout: thread}, Index: number}}
-local threads				: {[number]: {Yielded: thread, Timeout: thread}, Index: number}
-local remoteEvent			: RemoteEvent
-local packetCounter			: number
-local cursor = {Buffer = buffer.create(128), BufferLength = 128, BufferOffset = 0, Instances = {}, InstancesOffset = 0}
-
+local reads, writes, Import, Export, Truncate, Ended =
+	Types.Reads, Types.Writes, Types.Import, Types.Export, Types.Truncate, Types.Ended
+local ReadU8, WriteU8 = reads.NumberU8, writes.NumberU8
+local Packet = {} :: Packet<...any>
+local packets = {} :: { [string | number]: Packet<...any> }
+local playerCursors: { [Player]: Types.Cursor }
+local playerThreads: { [Player]: { [number]: { Yielded: thread, Timeout: thread }, Index: number } }
+local threads: { [number]: { Yielded: thread, Timeout: thread }, Index: number }
+local remoteEvent: RemoteEvent
+local packetCounter: number
+local cursor =
+	{ Buffer = buffer.create(128), BufferLength = 128, BufferOffset = 0, Instances = {}, InstancesOffset = 0 }
+local isServer = RunService:IsServer()
+local isStudio = RunService:IsStudio()
 
 -- Constructor
-local function Constructor<A..., B...>(_, name: string, ...: A...)
-	local packet = packets[name] :: Packet<A..., B...>
-	if packet then return packet end
-	local packet = (setmetatable({}, Packet) :: any) :: Packet<A..., B...>
+local function Constructor<A...>(_, name: string)
+	local packet = packets[name] :: Packet<A...>
+	if packet then
+		return packet
+	end
+	local packet = (setmetatable({}, Packet) :: any) :: Packet<A...>
 	packet.Name = name
-	if RunService:IsServer() then
+	if isServer then
 		packet.Id = packetCounter
 		packet.OnServerEvent = Signal() :: Signal.Signal<(Player, A...)>
 		remoteEvent:SetAttribute(name, packetCounter)
 		packets[packetCounter] = packet
 		packetCounter += 1
 	else
-		packet.Id = remoteEvent:GetAttribute(name)
+		packet.Id = remoteEvent:GetAttribute(name) :: number
 		packet.OnClientEvent = Signal() :: Signal.Signal<A...>
-		if packet.Id then packets[packet.Id] = packet end
+		if packet.Id then
+			packets[packet.Id] = packet
+		end
 	end
-	packet.Reads, packet.Writes = ParametersToFunctions(table.pack(...))
+	--packet.Reads, packet.Writes = ParametersToFunctions(table.pack(...))
+	packet.Reads, packet.Writes = reads.Any, writes.Any
 	packets[packet.Name] = packet
 	return packet
 end
-
 
 -- Packet
 Packet["__index"] = Packet
 Packet.Type = "Packet"
 
-function Packet:Response(...)
+function Packet:Response()
 	self.ResponseTimeout = self.ResponseTimeout or 10
-	self.ResponseReads, self.ResponseWrites = ParametersToFunctions(table.pack(...))
+	self.IsResponse = true
 	return self
 end
 
-function Packet:Fire(...)
-	if self.ResponseReads then
-		if RunService:IsServer() then error("You must use FireClient(player)", 2) end
-		local responseThread
-		for i = 1, 128 do
-			responseThread = threads[threads.Index]
-			if responseThread then threads.Index = (threads.Index + 1) % 128 else break end
+function Packet:Fire(...: any?)
+	assert(self.Id, "Packet is not registered on the server")
+	local data: { [number]: any } = { ... }
+	if #data <= 1 and typeof(data[1]) ~= "table" then
+		data = data[1]
+	end
+	if self.IsResponse then
+		if isServer then
+			error("You must use FireClient(player)", 2)
 		end
-		if responseThread then error("Cannot have more than 128 yielded threads", 2) end
+		local responseThread
+		for _ = 1, 128 do
+			responseThread = threads[threads.Index]
+			if responseThread then
+				threads.Index = (threads.Index + 1) % 128
+			else
+				break
+			end
+		end
+		if responseThread then
+			error("Cannot have more than 128 yielded threads", 2)
+		end
 		Import(cursor)
 		WriteU8(self.Id)
 		WriteU8(threads.Index)
-		threads[threads.Index] = {Yielded = coroutine.running(), Timeout = Task:Delay(self.ResponseTimeout, Timeout, threads, threads.Index, self.ResponseTimeoutValue)}
+		threads[threads.Index] = {
+			Yielded = coroutine.running(),
+			Timeout = Task:Delay(self.ResponseTimeout, Timeout, threads, threads.Index, self.ResponseTimeoutValue),
+		}
 		threads.Index = (threads.Index + 1) % 128
-		WriteParameters(self.Writes, {...})
+		--WriteParameters(self.Writes, data)
+		self.Writes(data)
 		cursor = Export()
 		return coroutine.yield()
 	else
 		Import(cursor)
 		WriteU8(self.Id)
-		WriteParameters(self.Writes, {...})
+		--WriteParameters(self.Writes, data)
+		self.Writes(data)
 		cursor = Export()
 	end
 end
 
-function Packet:FireClient(player, ...)
-	if player.Parent == nil then return end
-	if self.ResponseReads then
+function Packet:FireClient(player: Player, ...: any?)
+	if player.Parent == nil then
+		return
+	end
+	local data: { [number]: any } = { ... }
+	if #data <= 1 and typeof(data[1]) ~= "table" then
+		data = data[1]
+	end
+	if self.IsResponse then
 		local threads = playerThreads[player]
-		if threads == nil then threads = {Index = 0} playerThreads[player] = threads end
-		local responseThread
-		for i = 1, 128 do
-			responseThread = threads[threads.Index]
-			if responseThread then threads.Index = (threads.Index + 1) % 128 else break end
+		if threads == nil then
+			threads = { Index = 0 }
+			playerThreads[player] = threads
 		end
-		if responseThread then error("Cannot have more than 128 yielded threads", 2) return end
-		Import(playerCursors[player] or {Buffer = buffer.create(128), BufferLength = 128, BufferOffset = 0, Instances = {}, InstancesOffset = 0})
+		local responseThread
+		for _ = 1, 128 do
+			responseThread = threads[threads.Index]
+			if responseThread then
+				threads.Index = (threads.Index + 1) % 128
+			else
+				break
+			end
+		end
+		if responseThread then
+			error("Cannot have more than 128 yielded threads", 2)
+			return
+		end
+		Import(playerCursors[player] or {
+			Buffer = buffer.create(128),
+			BufferLength = 128,
+			BufferOffset = 0,
+			Instances = {},
+			InstancesOffset = 0,
+		})
 		WriteU8(self.Id)
 		WriteU8(threads.Index)
-		threads[threads.Index] = {Yielded = coroutine.running(), Timeout = Task:Delay(self.ResponseTimeout, Timeout, threads, threads.Index, self.ResponseTimeoutValue)}
+		threads[threads.Index] = {
+			Yielded = coroutine.running(),
+			Timeout = Task:Delay(self.ResponseTimeout, Timeout, threads, threads.Index, self.ResponseTimeoutValue),
+		}
 		threads.Index = (threads.Index + 1) % 128
-		WriteParameters(self.Writes, {...})
+		--WriteParameters(self.Writes, data)
+		self.Writes(data)
 		playerCursors[player] = Export()
 		return coroutine.yield()
 	else
-		Import(playerCursors[player] or {Buffer = buffer.create(128), BufferLength = 128, BufferOffset = 0, Instances = {}, InstancesOffset = 0})
+		Import(playerCursors[player] or {
+			Buffer = buffer.create(128),
+			BufferLength = 128,
+			BufferOffset = 0,
+			Instances = {},
+			InstancesOffset = 0,
+		})
 		WriteU8(self.Id)
-		WriteParameters(self.Writes, {...})
+		--WriteParameters(self.Writes, data)
+		self.Writes(data)
 		playerCursors[player] = Export()
 	end
 end
 
-function Packet:Serialize(...)
-	Import({Buffer = buffer.create(128), BufferLength = 128, BufferOffset = 0, Instances = {}, InstancesOffset = 0})
-	WriteParameters(self.Writes, {...})
+function Packet:Serialize(...: any)
+	local data: { [number]: any } = { ... }
+	if #data <= 1 and typeof(data[1]) ~= "table" then
+		data = data[1]
+	end
+	Import({ Buffer = buffer.create(128), BufferLength = 128, BufferOffset = 0, Instances = {}, InstancesOffset = 0 })
+	--WriteParameters(self.Writes, { ... })
+	self.Writes(data)
 	return Truncate()
 end
 
-function Packet:Deserialize(serializeBuffer, instances)
-	Import({Buffer = serializeBuffer, BufferLength = buffer.len(serializeBuffer), BufferOffset = 0, Instances = instances or {}, InstancesOffset = 0})
-	return ReadParameters(self.Reads)
+function Packet:Deserialize(serializeBuffer: buffer, instances: { Instance }?)
+	Import({
+		Buffer = serializeBuffer,
+		BufferLength = buffer.len(serializeBuffer),
+		BufferOffset = 0,
+		Instances = instances or {},
+		InstancesOffset = 0,
+	})
+	local data = self.Reads()
+	return typeof(data) == "table" and table.unpack(data) or data
 end
-
 
 -- Functions
-function ParametersToFunctions(parameters: {any})
-	local readFunctions, writeFunctions = table.create(#parameters), table.create(#parameters)
-	for index, parameter in ipairs(parameters) do
-		if type(parameter) == "table" then
-			readFunctions[index], writeFunctions[index] = TableToFunctions(parameter)
-		else
-			readFunctions[index], writeFunctions[index] = reads[parameter], writes[parameter]
-		end
-	end
-	return readFunctions, writeFunctions
-end
-
-function TableToFunctions(parameters: {any})
-	if #parameters == 1 then
-		local parameter = parameters[1]
-		local ReadFunction, WriteFunction
-		if type(parameter) == "table" then
-			ReadFunction, WriteFunction = TableToFunctions(parameter)
-		else
-			ReadFunction, WriteFunction = reads[parameter], writes[parameter]
-		end
-		local Read = function()
-			local length = ReadU16()
-			local values = table.create(length)
-			for index = 1, length do values[index] = ReadFunction() end
-			return values
-		end
-		local Write = function(values: {any})
-			WriteU16(#values)
-			for index, value in values do WriteFunction(value) end
-		end
-		return Read, Write
-	else
-		local keys = {} for key, value in parameters do table.insert(keys, key) end table.sort(keys)
-		local readFunctions, writeFunctions = table.create(#keys), table.create(#keys)
-		for index, key in keys do
-			local parameter = parameters[key]
-			if type(parameter) == "table" then 
-				readFunctions[index], writeFunctions[index] = TableToFunctions(parameter)
-			else
-				readFunctions[index], writeFunctions[index] = reads[parameter], writes[parameter]
-			end
-		end
-		local Read = function()
-			local values = {}
-			for index, ReadFunction in readFunctions do values[keys[index]] = ReadFunction() end
-			return values
-		end
-		local Write = function(values: {[any]: any})
-			for index, WriteFunction in writeFunctions do WriteFunction(values[keys[index]]) end
-		end
-		return Read, Write
-	end
-end
-
-function ReadParameters(reads: {() -> any})
-	local values = table.create(#reads)
-	for index, func in reads do values[index] = func() end
-	return table.unpack(values)
-end
-
-function WriteParameters(writes: {(any) -> ()}, values: {any})
-	for index, func in writes do func(values[index]) end
-end
-
-function Timeout(threads: {[number]: {Yielded: thread, Timeout: thread}, Index: number}, threadIndex: number, value: any)
+function Timeout(
+	threads: { [number]: { Yielded: thread, Timeout: thread }, Index: number },
+	threadIndex: number,
+	value: any
+)
 	local responseThreads = threads[threadIndex]
 	task.defer(responseThreads.Yielded, value)
 	threads[threadIndex] = nil
 end
 
-
 -- Initialize
-if RunService:IsServer() then
+if isServer then
 	playerCursors = {}
 	playerThreads = {}
 	packetCounter = 0
@@ -255,49 +259,91 @@ if RunService:IsServer() then
 	end)
 
 	local respond = function(packet: Packet, player: Player, threadIndex: number, ...)
-		if packet.OnServerInvoke == nil then if RunService:IsStudio() then warn("OnServerInvoke not found for packet:", packet.Name, "discarding event:", ...) end return end
-		local values = {packet.OnServerInvoke(player, ...)}
-		if player.Parent == nil then return end
-		Import(playerCursors[player] or {Buffer = buffer.create(128), BufferLength = 128, BufferOffset = 0, Instances = {}, InstancesOffset = 0})
+		if packet.OnServerInvoke == nil then
+			if isStudio then
+				warn("OnServerInvoke not found for packet:", packet.Name, "discarding event:", ...)
+			end
+			return
+		end
+		local values: { [number]: any } = { packet.OnServerInvoke(player, ...) }
+		if #values <= 1 and typeof(values[1]) ~= "table" then
+			values = values[1]
+		end
+		if player.Parent == nil then
+			return
+		end
+		Import(playerCursors[player] or {
+			Buffer = buffer.create(128),
+			BufferLength = 128,
+			BufferOffset = 0,
+			Instances = {},
+			InstancesOffset = 0,
+		})
 		WriteU8(packet.Id)
 		WriteU8(threadIndex + 128)
-		WriteParameters(packet.ResponseWrites, values)
+		--WriteParameters(packet.ResponseWrites, values)
+		packet.Writes(values)
 		playerCursors[player] = Export()
 	end
-	
-	local onServerEvent = function(player: Player, receivedBuffer: buffer, instances: {Instance}?)
+
+	local onServerEvent = function(player: Player, receivedBuffer: buffer, instances: { Instance }?)
 		local bytes = (playerBytes[player] or 0) + math.max(buffer.len(receivedBuffer), 800)
-		if bytes > 8_000 then if RunService:IsStudio() then warn(player.Name, "is exceeding the data/rate limit; some events may be dropped") end return end
+		if bytes > 8_000 then
+			if isStudio then
+				warn(player.Name, "is exceeding the data/rate limit; some events may be dropped")
+			end
+			return
+		end
 		playerBytes[player] = bytes
-		Import({Buffer = receivedBuffer, BufferLength = buffer.len(receivedBuffer), BufferOffset = 0, Instances = instances or {}, InstancesOffset = 0})
+		Import({
+			Buffer = receivedBuffer,
+			BufferLength = buffer.len(receivedBuffer),
+			BufferOffset = 0,
+			Instances = instances or {},
+			InstancesOffset = 0,
+		})
 		while Ended() == false do
-			local packet = packets[ReadU8()]
-			if packet.ResponseReads then
+			local packet = packets[ReadU8()] -- if this is nil then the packet is not registered
+			if packet.IsResponse then
 				local threadIndex = ReadU8()
 				if threadIndex < 128 then
-					Task:Defer(respond, packet, player, threadIndex, ReadParameters(packet.Reads))
+					local data = packet.Reads()
+					Task:Defer(
+						respond,
+						packet,
+						player,
+						threadIndex,
+						typeof(data) == "table" and table.unpack(data) or data
+					)
 				else
 					threadIndex -= 128
 					local responseThreads = playerThreads[player][threadIndex]
 					if responseThreads then
 						task.cancel(responseThreads.Timeout)
-						task.defer(responseThreads.Yielded, ReadParameters(packet.ResponseReads))
+						local data = packet.Reads()
+						task.defer(responseThreads.Yielded, typeof(data) == "table" and table.unpack(data) or data)
 						playerThreads[player][threadIndex] = nil
-					elseif RunService:IsStudio() then
-						warn("Response thread not found for packet:", packet.Name, "discarding response:", ReadParameters(packet.ResponseReads))
-					else
-						ReadParameters(packet.ResponseReads)
+					elseif isStudio then
+						warn(
+							"Response thread not found for packet:",
+							packet.Name,
+							"discarding response:",
+							packet.Reads()
+						)
 					end
 				end
 			else
-				packet.OnServerEvent:Fire(player, ReadParameters(packet.Reads))
+				local data = packet.Reads()
+				packet.OnServerEvent:Fire(player, typeof(data) == "table" and table.unpack(data) or data) -- player, data (table)
 			end
 		end
 	end
 
 	remoteEvent.OnServerEvent:Connect(function(player: Player, ...)
-		local success, errorMessage: string? = pcall(onServerEvent, player, ...)
-		if errorMessage and RunService:IsStudio() then warn(player.Name, errorMessage) end
+		local _, errorMessage: string? = pcall(onServerEvent, player, ...)
+		if errorMessage and isStudio then
+			warn(player.Name, errorMessage)
+		end
 	end)
 
 	PlayersService.PlayerRemoving:Connect(function(player)
@@ -306,9 +352,11 @@ if RunService:IsServer() then
 		playerBytes[player] = nil
 	end)
 
-	RunService.Heartbeat:Connect(function(deltaTime) task.defer(thread) end)
+	RunService.Heartbeat:Connect(function(_)
+		task.defer(thread)
+	end)
 else
-	threads = {Index = 0}
+	threads = { Index = 0 }
 	remoteEvent = script:WaitForChild("RemoteEvent")
 	local totalTime = 0
 
@@ -331,36 +379,57 @@ else
 	end)
 
 	local respond = function(packet: Packet, threadIndex: number, ...)
-		if packet.OnClientInvoke == nil then warn("OnClientInvoke not found for packet:", packet.Name, "discarding event:", ...) return end
-		local values = {packet.OnClientInvoke(...)}
+		if packet.OnClientInvoke == nil then
+			warn("OnClientInvoke not found for packet:", packet.Name, "discarding event:", ...)
+			return
+		end
+		local values: { [number]: any } = { packet.OnClientInvoke(...) }
+		if #values <= 1 and typeof(values[1]) ~= "table" then
+			values = values[1]
+		end
 		Import(cursor)
 		WriteU8(packet.Id)
 		WriteU8(threadIndex + 128)
-		WriteParameters(packet.ResponseWrites, values)
+		--WriteParameters(packet.ResponseWrites, values)
+		packet.Writes(values)
 		cursor = Export()
 	end
 
-	remoteEvent.OnClientEvent:Connect(function(receivedBuffer: buffer, instances: {Instance}?)
-		Import({Buffer = receivedBuffer, BufferLength = buffer.len(receivedBuffer), BufferOffset = 0, Instances = instances or {}, InstancesOffset = 0})
+	remoteEvent.OnClientEvent:Connect(function(receivedBuffer: buffer, instances: { Instance }?)
+		Import({
+			Buffer = receivedBuffer,
+			BufferLength = buffer.len(receivedBuffer),
+			BufferOffset = 0,
+			Instances = instances or {},
+			InstancesOffset = 0,
+		})
 		while Ended() == false do
 			local packet = packets[ReadU8()]
-			if packet.ResponseReads then
+			if packet.IsResponse then
 				local threadIndex = ReadU8()
 				if threadIndex < 128 then
-					Task:Defer(respond, packet, threadIndex, ReadParameters(packet.Reads))
+					local data = packet.Reads()
+					Task:Defer(respond, packet, threadIndex, typeof(data) == "table" and table.unpack(data) or data)
 				else
 					threadIndex -= 128
 					local responseThreads = threads[threadIndex]
 					if responseThreads then
 						task.cancel(responseThreads.Timeout)
-						task.defer(responseThreads.Yielded, ReadParameters(packet.ResponseReads))
+						local data = packet.Reads()
+						task.defer(responseThreads.Yielded, typeof(data) == "table" and table.unpack(data) or data)
 						threads[threadIndex] = nil
 					else
-						warn("Response thread not found for packet:", packet.Name, "discarding response:", ReadParameters(packet.ResponseReads))
+						warn(
+							"Response thread not found for packet:",
+							packet.Name,
+							"discarding response:",
+							packet.Reads()
+						)
 					end
 				end
 			else
-				packet.OnClientEvent:Fire(ReadParameters(packet.Reads))
+				local data = packet.Reads()
+				packet.OnClientEvent:Fire(typeof(data) == "table" and table.unpack(data) or data) -- data (table)
 			end
 		end
 	end)
@@ -368,9 +437,13 @@ else
 	remoteEvent.AttributeChanged:Connect(function(name)
 		local packet = packets[name]
 		if packet then
-			if packet.Id then packets[packet.Id] = nil end
-			packet.Id = remoteEvent:GetAttribute(name)
-			if packet.Id then packets[packet.Id] = packet end
+			if packet.Id then
+				packets[packet.Id] = nil
+			end
+			packet.Id = remoteEvent:GetAttribute(name) :: number
+			if packet.Id then
+				packets[packet.Id] = packet
+			end
 		end
 	end)
 
@@ -383,5 +456,4 @@ else
 	end)
 end
 
-
-return setmetatable(Types.Types, {__call = Constructor})
+return setmetatable({}, { __call = Constructor })

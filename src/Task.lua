@@ -1,20 +1,18 @@
 --!strict
-
+--!optimize 2
 
 -- Types
 export type Task = {
-	Type:					"Task",
-	Spawn:					(self: Task, func: (...any) -> (), ...any) -> thread,
-	Defer:					(self: Task, func: (...any) -> (), ...any) -> thread,
-	Delay:					(self: Task, duration: number, func: (...any) -> (), ...any) -> thread,
+	Type: "Task",
+	Spawn: (self: Task, func: (...any) -> (), ...any) -> thread,
+	Defer: (self: Task, func: (...any) -> (), ...any) -> thread,
+	Delay: (self: Task, duration: number, func: (...any) -> (), ...any) -> thread,
 }
-
 
 -- Varables
 local Call, Thread
-local Task = {}				:: Task
-local threads = {}			:: {thread}
-
+local Task = {} :: Task
+local threads = {} :: { thread }
 
 -- Task
 Task.Type = "Task"
@@ -31,7 +29,6 @@ function Task:Delay(duration, func, ...)
 	return task.delay(duration, table.remove(threads) or task.spawn(Thread), func, ...)
 end
 
-
 -- Functions
 function Call(func: (...any) -> (), ...)
 	func(...)
@@ -39,8 +36,9 @@ function Call(func: (...any) -> (), ...)
 end
 
 function Thread()
-	while true do Call(coroutine.yield()) end
+	while true do
+		Call(coroutine.yield())
+	end
 end
-
 
 return Task
