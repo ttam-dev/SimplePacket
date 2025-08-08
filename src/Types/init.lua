@@ -422,7 +422,7 @@ end
 anyReads[25] = function()
 	local length = ReadU8()
 	local keypoints = table.create(length)
-	for index = 1, length do
+	for _ = 1, length do
 		table.insert(keypoints, NumberSequenceKeypoint.new(ReadU8() / 255, ReadU8() / 255, ReadU8() / 255))
 	end
 	return NumberSequence.new(keypoints)
@@ -432,7 +432,7 @@ anyWrites.NumberSequence = function(value: NumberSequence)
 	Allocate(2 + length * 3)
 	WriteU8(25)
 	WriteU8(length)
-	for index, keypoint in value.Keypoints do
+	for _, keypoint in value.Keypoints do
 		WriteU8(keypoint.Time * 255 + 0.5)
 		WriteU8(keypoint.Value * 255 + 0.5)
 		WriteU8(keypoint.Envelope * 255 + 0.5)
@@ -442,7 +442,7 @@ end
 anyReads[26] = function()
 	local length = ReadU8()
 	local keypoints = table.create(length)
-	for index = 1, length do
+	for _ = 1, length do
 		table.insert(keypoints, ColorSequenceKeypoint.new(ReadU8() / 255, Color3.fromRGB(ReadU8(), ReadU8(), ReadU8())))
 	end
 	return ColorSequence.new(keypoints)
@@ -452,7 +452,7 @@ anyWrites.ColorSequence = function(value: ColorSequence)
 	Allocate(2 + length * 4)
 	WriteU8(26)
 	WriteU8(length)
-	for index, keypoint in value.Keypoints do
+	for _, keypoint in value.Keypoints do
 		WriteU8(keypoint.Time * 255 + 0.5)
 		WriteU8(keypoint.Value.R * 255 + 0.5)
 		WriteU8(keypoint.Value.G * 255 + 0.5)
