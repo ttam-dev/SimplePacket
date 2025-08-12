@@ -308,20 +308,22 @@ if isServer then
 				local threadIndex = ReadU8()
 				if threadIndex < 128 then
 					local data = packet.Reads()
-					Task:Defer(
-						respond,
-						packet,
-						player,
-						threadIndex,
-						typeof(data) == "table" and table.unpack(data) or data
-					)
+					if typeof(data) == "table" then
+						Task:Defer(respond, packet, player, threadIndex, table.unpack(data))
+					else
+						Task:Defer(respond, packet, player, threadIndex, data)
+					end
 				else
 					threadIndex -= 128
 					local responseThreads = playerThreads[player][threadIndex]
 					if responseThreads then
 						task.cancel(responseThreads.Timeout)
 						local data = packet.Reads()
-						task.defer(responseThreads.Yielded, typeof(data) == "table" and table.unpack(data) or data)
+						if typeof(data) == "table" then
+							task.defer(responseThreads.Yielded, table.unpack(data))
+						else
+							task.defer(responseThreads.Yielded, data)
+						end
 						playerThreads[player][threadIndex] = nil
 					elseif isStudio then
 						warn(
@@ -334,7 +336,11 @@ if isServer then
 				end
 			else
 				local data = packet.Reads()
-				packet.OnServerEvent:Fire(player, typeof(data) == "table" and table.unpack(data) or data) -- player, data (table)
+				if typeof(data) == "table" then
+					packet.OnServerEvent:Fire(player, table.unpack(data))
+				else
+					packet.OnServerEvent:Fire(player, data)
+				end
 			end
 		end
 	end
@@ -409,14 +415,22 @@ else
 				local threadIndex = ReadU8()
 				if threadIndex < 128 then
 					local data = packet.Reads()
-					Task:Defer(respond, packet, threadIndex, typeof(data) == "table" and table.unpack(data) or data)
+					if typeof(data) == "table" then
+						Task:Defer(respond, packet, threadIndex, table.unpack(data))
+					else
+						Task:Defer(respond, packet, threadIndex, data)
+					end
 				else
 					threadIndex -= 128
 					local responseThreads = threads[threadIndex]
 					if responseThreads then
 						task.cancel(responseThreads.Timeout)
 						local data = packet.Reads()
-						task.defer(responseThreads.Yielded, typeof(data) == "table" and table.unpack(data) or data)
+						if typeof(data) == "table" then
+							task.defer(responseThreads.Yielded, table.unpack(data))
+						else
+							task.defer(responseThreads.Yielded, data)
+						end
 						threads[threadIndex] = nil
 					else
 						warn(
@@ -429,7 +443,11 @@ else
 				end
 			else
 				local data = packet.Reads()
-				packet.OnClientEvent:Fire(typeof(data) == "table" and table.unpack(data) or data) -- data (table)
+				if typeof(data) == "table" then
+					packet.OnClientEvent:Fire(table.unpack(data))
+				else
+					packet.OnClientEvent:Fire(data)
+				end
 			end
 		end
 	end)
