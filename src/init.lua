@@ -11,7 +11,7 @@ export type Packet<A... = ()> = {
 	Type: "Packet",
 	Id: number,
 	Name: string,
-	Reads: () -> any,
+	Reads: (any) -> any,
 	Writes: (any) -> (),
 	IsResponse: boolean,
 	ResponseTimeout: number,
