@@ -7,7 +7,7 @@ local Task = require(script.Task)
 local Types = require(script.Types)
 
 -- Types
-export type Packet<A... = ()> = {
+export type Packet = {
 	Type: "Packet",
 	Id: number,
 	Name: string,
@@ -18,13 +18,13 @@ export type Packet<A... = ()> = {
 	ResponseTimeoutValue: any,
 	OnServerEvent: Signal.Signal<(Player, ...any)>,
 	OnClientEvent: Signal.Signal<...any>,
-	OnServerInvoke: nil | (player: Player, ...any) -> A...,
-	OnClientInvoke: nil | (...any) -> A...,
-	Response: (self: Packet<A...>) -> Packet<A...>,
-	Fire: (self: Packet<A...>, ...any) -> A...,
-	FireClient: (self: Packet<A...>, player: Player, ...any) -> A...,
-	Serialize: (self: Packet<A...>, ...any) -> (buffer, { Instance }?),
-	Deserialize: (self: Packet<A...>, serializeBuffer: buffer, instances: { Instance }?) -> ...any,
+	OnServerInvoke: nil | (player: Player, ...any) -> ...any,
+	OnClientInvoke: nil | (...any) -> ...any,
+	Response: (self: Packet) -> Packet,
+	Fire: (self: Packet, ...any) -> ...any,
+	FireClient: (self: Packet, player: Player, ...any) -> ...any,
+	Serialize: (self: Packet, ...any) -> (buffer, { Instance }?),
+	Deserialize: (self: Packet, serializeBuffer: buffer, instances: { Instance }?) -> ...any,
 }
 
 -- Varables
@@ -34,8 +34,8 @@ local PlayersService = game:GetService("Players")
 local reads, writes, Import, Export, Truncate, Ended =
 	Types.Reads, Types.Writes, Types.Import, Types.Export, Types.Truncate, Types.Ended
 local ReadU8, WriteU8 = reads.NumberU8, writes.NumberU8
-local Packet = {} :: Packet<...any>
-local packets = {} :: { [string | number]: Packet<...any> }
+local Packet = {} :: Packet
+local packets = {} :: { [string | number]: Packet }
 local playerCursors: { [Player]: Types.Cursor }
 local playerThreads: { [Player]: { [number]: { Yielded: thread, Timeout: thread }, Index: number } }
 local threads: { [number]: { Yielded: thread, Timeout: thread }, Index: number }
@@ -47,12 +47,12 @@ local isServer = RunService:IsServer()
 local isStudio = RunService:IsStudio()
 
 -- Constructor
-local function Constructor<A...>(_, name: string)
-	local packet = packets[name] :: Packet<A...>
+local function Constructor(_, name: string)
+	local packet = packets[name] :: Packet
 	if packet then
 		return packet
 	end
-	local packet = (setmetatable({}, Packet) :: any) :: Packet<A...>
+	local packet = (setmetatable({}, Packet) :: any) :: Packet
 	packet.Name = name
 	if isServer then
 		packet.Id = packetCounter
