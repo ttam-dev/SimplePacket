@@ -16,15 +16,15 @@ export type Packet<A... = ()> = {
 	IsResponse: boolean,
 	ResponseTimeout: number,
 	ResponseTimeoutValue: any,
-	OnServerEvent: Signal.Signal<(Player, A...)>,
-	OnClientEvent: Signal.Signal<A...>,
-	OnServerInvoke: nil | (player: Player, A...) -> ...any,
-	OnClientInvoke: nil | (A...) -> ...any,
+	OnServerEvent: Signal.Signal<(Player, ...any)>,
+	OnClientEvent: Signal.Signal<...any>,
+	OnServerInvoke: nil | (player: Player, ...any) -> A...,
+	OnClientInvoke: nil | (...any) -> A...,
 	Response: (self: Packet<A...>) -> Packet<A...>,
-	Fire: (self: Packet<A...>, A...) -> ...any,
-	FireClient: (self: Packet<A...>, player: Player, A...) -> ...any,
-	Serialize: (self: Packet<A...>, A...) -> (buffer, { Instance }?),
-	Deserialize: (self: Packet<A...>, serializeBuffer: buffer, instances: { Instance }?) -> A...,
+	Fire: (self: Packet<A...>, ...any) -> A...,
+	FireClient: (self: Packet<A...>, player: Player, ...any) -> A...,
+	Serialize: (self: Packet<A...>, ...any) -> (buffer, { Instance }?),
+	Deserialize: (self: Packet<A...>, serializeBuffer: buffer, instances: { Instance }?) -> ...any,
 }
 
 -- Varables
@@ -56,13 +56,13 @@ local function Constructor<A...>(_, name: string)
 	packet.Name = name
 	if isServer then
 		packet.Id = packetCounter
-		packet.OnServerEvent = Signal() :: Signal.Signal<(Player, A...)>
+		packet.OnServerEvent = Signal() :: Signal.Signal<(Player, ...any)>
 		remoteEvent:SetAttribute(name, packetCounter)
 		packets[packetCounter] = packet
 		packetCounter += 1
 	else
 		packet.Id = remoteEvent:GetAttribute(name) :: number
-		packet.OnClientEvent = Signal() :: Signal.Signal<A...>
+		packet.OnClientEvent = Signal() :: Signal.Signal<...any>
 		if packet.Id then
 			packets[packet.Id] = packet
 		end
@@ -83,7 +83,7 @@ function Packet:Response()
 	return self
 end
 
-function Packet:Fire(...: any?)
+function Packet:Fire(...: any)
 	assert(self.Id, "Packet is not registered on the server")
 	local data: { [number]: any } = { ... }
 	if #data <= 1 and typeof(data[1]) ~= "table" then
@@ -126,7 +126,7 @@ function Packet:Fire(...: any?)
 	end
 end
 
-function Packet:FireClient(player: Player, ...: any?)
+function Packet:FireClient(player: Player, ...: any)
 	if player.Parent == nil then
 		return
 	end
